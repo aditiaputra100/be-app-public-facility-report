@@ -1,10 +1,12 @@
 import os
 import shutil
-from fastapi import FastAPI, Depends, Form, File, UploadFile, HTTPException
+from fastapi import FastAPI, Depends, Form, File, UploadFile, HTTPException, status
 from sqlalchemy.orm import Session
-from database import SessionLocal, engine
-from dependency.auth import get_current_user
-from models import Report, Base
+import models
+from database import engine, get_db
+from dependency.auth import get_current_user, get_current_admin
+from models import Report, User, Admin, Base
+from firebase_admin.auth import UserRecord
 
 Base.metadata.create_all(bind=engine)
 
@@ -13,19 +15,46 @@ app = FastAPI()
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def get_db():
-    db = SessionLocal()
-
-    try:
-        yield db
-    finally:
-        db.close()
-
 @app.get("/")
 def read_root():
     return {"msg": "Hello World"}
 
-@app.post("/report")
+@app.post("/register/user", status_code=status.HTTP_201_CREATED)
+def create_user(user:UserRecord = Depends(get_current_user), db: Session = Depends(get_db)):
+    print(user)
+
+    user = User(
+        uid = user.uid,
+        full_name = user.display_name
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "msg": "Success created user",
+        "uid": user.uid
+    }
+
+@app.post("/register/admin", status_code=status.HTTP_201_CREATED)
+def create_admin(user: UserRecord = Depends(get_current_admin), db: Session = Depends(get_db)):
+    admin = Admin(
+        uid = user.uid,
+        full_name = user.display_name
+    )
+
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+
+    return {
+        "msg": "Success created user",
+        "uid": admin.uid
+    }
+
+
+@app.post("/report", status_code=status.HTTP_201_CREATED)
 async def create_report(
         facility: str = Form(),
         description: str = Form(),
@@ -61,6 +90,17 @@ async def create_report(
 
     return {"msg": "Success created report", "id": report.id}
 
-@app.get("/report")
-async def get_report(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    pass
+@app.get("/report", dependencies=[Depends(get_current_user)])
+async def get_report(db: Session = Depends(get_db)):
+    report = db.query(models.Report).all()
+
+    return {
+        "data": report
+    }
+
+@app.get("/report/user/{uid}", dependencies=[Depends(get_current_user)])
+async def get_report_by_user_uid(uid: str, db: Session = Depends(get_db)):
+    report = db.query(models.Report).where(uid == models.Report.user_uid).all()
+
+    print(report)
+
