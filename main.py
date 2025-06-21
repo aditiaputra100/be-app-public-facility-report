@@ -1,10 +1,12 @@
 import os
 import shutil
 from fastapi import FastAPI, Depends, Form, File, UploadFile, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session, joinedload
 import models
+import schemas
 from database import engine, get_db
-from dependency.auth import get_current_user, get_current_admin
+from dependency.auth import get_current_user, get_current_admin, get_current_user_or_admin
 from models import Report, User, Admin, Base
 from firebase_admin.auth import UserRecord
 
@@ -18,6 +20,15 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 @app.get("/")
 def read_root():
     return {"msg": "Hello World"}
+
+@app.get("/uploads/{filename}")
+async def get_image(filename: str):
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    return FileResponse(file_path, media_type="image/jpeg")
 
 @app.post("/register/user", status_code=status.HTTP_201_CREATED)
 def create_user(user:UserRecord = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -62,7 +73,7 @@ async def create_report(
         picture: UploadFile = File(),
         db: Session = Depends(get_db),
         # user_id: str = Form(...)
-        user: dict = Depends(get_current_user)
+        user: UserRecord = Depends(get_current_user)
 ):
 
     if picture.filename == "":
@@ -76,7 +87,7 @@ async def create_report(
         shutil.copyfileobj(picture.file, buffer)
 
     report = Report(
-        user_uid = user["uid"],
+        user_uid = user.uid,
         # user_uid = user_id,
         facility = facility,
         description = description,
@@ -89,18 +100,37 @@ async def create_report(
     db.refresh(report)
 
     return {"msg": "Success created report", "id": report.id}
+    # return {"msg": "Success created report"}
 
-@app.get("/report", dependencies=[Depends(get_current_user)])
-async def get_report(db: Session = Depends(get_db)):
-    report = db.query(models.Report).all()
+@app.get("/report", dependencies=[Depends(get_current_user_or_admin)], response_model=schemas.ReportListResponse)
+async def get_report(db: Session = Depends(get_db), limit: int = 10):
+    reports = db.query(models.Report).options(joinedload(models.Report.user), joinedload(models.Report.admin)).limit(limit).all()
 
-    return {
-        "data": report
-    }
+    in_review: int = 0
+    in_progress: int = 0
+    in_finished: int = 0
+
+    for report in reports:
+        if report.status == "in-review":
+            in_review += 1
+        elif report.status == "in-progress":
+            in_progress += 1
+        else:
+            in_finished += 1
+
+    # return {
+    #     "data": reports,
+    #     "length": len(reports)
+    # }
+
+    return schemas.ReportListResponse(data=[schemas.ReportOut.from_orm(report) for report in reports], length=len(reports), length_review=in_review, length_progress=in_progress, length_finished=in_finished)
 
 @app.get("/report/user/{uid}", dependencies=[Depends(get_current_user)])
 async def get_report_by_user_uid(uid: str, db: Session = Depends(get_db)):
     report = db.query(models.Report).where(uid == models.Report.user_uid).all()
+    report_length : int = len(report)
 
-    print(report)
-
+    return {
+        "data": report,
+        "length": report_length
+    }

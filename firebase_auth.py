@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from firebase_admin import auth, credentials, initialize_app
 
 cred_user = credentials.Certificate("path/to/serviceAccountKeyUser.json")
@@ -11,11 +12,11 @@ def verify_user_token(id_token: str):
         decoded_token = auth.verify_id_token(id_token, app=app_user)
         return decoded_token
     except Exception as _:
-        raise Exception("Invalid Firebase token")
+        raise HTTPException(status_code= 401, detail="Unauthorized")
 
 def verify_admin_token(id_token: str):
     try:
         decoded_token = auth.verify_id_token(id_token, app=app_admin)
         return decoded_token
     except Exception as _:
-        raise Exception("Invalid Firebase token")
+        raise HTTPException(status_code= 401, detail="Unauthorized")
