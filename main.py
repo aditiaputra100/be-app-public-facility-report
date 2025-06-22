@@ -48,7 +48,7 @@ def create_user(user:UserRecord = Depends(get_current_user), db: Session = Depen
         "uid": user.uid
     }
 
-@app.post("/register/admin", status_code=status.HTTP_201_CREATED)
+@app.post("/register/admin", dependencies=[Depends(get_current_admin)], status_code=status.HTTP_201_CREATED)
 def create_admin(user: UserRecord = Depends(get_current_admin), db: Session = Depends(get_db)):
     admin = Admin(
         uid = user.uid,
@@ -65,7 +65,7 @@ def create_admin(user: UserRecord = Depends(get_current_admin), db: Session = De
     }
 
 
-@app.post("/report", status_code=status.HTTP_201_CREATED)
+@app.post("/report", dependencies=[Depends(get_current_user)], status_code=status.HTTP_201_CREATED)
 async def create_report(
         facility: str = Form(),
         description: str = Form(),
@@ -103,27 +103,30 @@ async def create_report(
     # return {"msg": "Success created report"}
 
 @app.get("/report", dependencies=[Depends(get_current_user_or_admin)], response_model=schemas.ReportListResponse)
-async def get_report(db: Session = Depends(get_db), limit: int = 10):
-    reports = db.query(models.Report).options(joinedload(models.Report.user), joinedload(models.Report.admin)).limit(limit).all()
+async def get_report(db: Session = Depends(get_db), status_report: str = "", limit: int = 10):
 
-    in_review: int = 0
-    in_progress: int = 0
-    in_finished: int = 0
+    if status_report == "":
+        reports = db.query(models.Report).options(joinedload(models.Report.user), joinedload(models.Report.admin)).limit(limit).all()
+    else:
+        reports = db.query(models.Report).options(joinedload(models.Report.user),
+                                                  joinedload(models.Report.admin)).where(models.Report.status == status_report).limit(limit).all()
 
-    for report in reports:
-        if report.status == "in-review":
-            in_review += 1
-        elif report.status == "in-progress":
-            in_progress += 1
-        else:
-            in_finished += 1
+    length_all: int = db.query(models.Report).count()
+    length_in_review: int = db.query(models.Report).where(models.Report.status == "in-review").count()
+    length_in_progress: int = db.query(models.Report).where(models.Report.status == "in-progress").count()
+    length_in_finished: int = db.query(models.Report).where(models.Report.status == "finished").count()
 
     # return {
     #     "data": reports,
     #     "length": len(reports)
     # }
 
-    return schemas.ReportListResponse(data=[schemas.ReportOut.from_orm(report) for report in reports], length=len(reports), length_review=in_review, length_progress=in_progress, length_finished=in_finished)
+    return schemas.ReportListResponse(data=[schemas.ReportOut.from_orm(report) for report in reports], counts={
+        "all": length_all,
+        "in-review": length_in_review,
+        "in-progress": length_in_progress,
+        "finished": length_in_finished
+    })
 
 @app.get("/report/user/{uid}", dependencies=[Depends(get_current_user)])
 async def get_report_by_user_uid(uid: str, db: Session = Depends(get_db)):
@@ -133,4 +136,24 @@ async def get_report_by_user_uid(uid: str, db: Session = Depends(get_db)):
     return {
         "data": report,
         "length": report_length
+    }
+
+@app.put("/report/status/{id}", dependencies=[Depends(get_current_admin)])
+async def update_report_status(id: int, status_report: schemas.ReportUpdateStatus, db: Session = Depends(get_db)):
+    report = db.query(models.Report).where(models.Report.id == id).first()
+
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    if not status_report:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Status cannot be null or empty")
+
+    report.status = status_report.status_report
+
+    db.commit()
+    db.refresh(report)
+
+    return {
+        "msg": "Update report status successfully",
+        "id": report.id
     }

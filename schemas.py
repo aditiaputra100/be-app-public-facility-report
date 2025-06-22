@@ -34,7 +34,7 @@ class ReportOut(BaseModel):
 
 class ReportListResponse(BaseModel):
     data: List[ReportOut]
-    length: int
-    length_review: int
-    length_progress: int
-    length_finished: int
+    counts: dict[str, int]
+    
+class ReportUpdateStatus(BaseModel):
+    status_report: str
