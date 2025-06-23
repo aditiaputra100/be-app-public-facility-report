@@ -64,6 +64,15 @@ def create_admin(user: UserRecord = Depends(get_current_admin), db: Session = De
         "uid": admin.uid
     }
 
+@app.get("/admin", dependencies=[Depends(get_current_admin)])
+def get_admin(db: Session = Depends(get_db)):
+    admins = db.query(models.Admin).all()
+
+    return {
+        "data": admins,
+        "length": len(admins)
+    }
+
 
 @app.post("/report", dependencies=[Depends(get_current_user)], status_code=status.HTTP_201_CREATED)
 async def create_report(
